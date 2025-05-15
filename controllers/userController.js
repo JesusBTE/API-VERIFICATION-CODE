@@ -1,21 +1,21 @@
 const userModel = require("../models/userModel");
 const authCodeModel = require("../models/authCodeModel");
 const twilio = require("twilio");
-const jwt = require("jsonwebtoken"); // Se importa JWT para generar tokens de sesión
+const jwt = require("jsonwebtoken"); //Se importa JWT para generar tokens de sesión
 require("dotenv").config();
 
-// Configuración de Twilio
+//Configuración de Twilio
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const fromWhatsAppNumber = process.env.TWILIO_WHATSAPP_NUMBER;
 const client = twilio(accountSid, authToken);
-// Generar código de verificación de 6 dígitos
+//Generar código de verificación de 6 dígitos
 function generateVerificationCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Función para enviar mensajes con reintentos en caso de error de límite
+//Función para enviar mensajes con reintentos en caso de error de límite
 async function sendMessageTwilio(phone, code) {
   const MAX_TRIES = 3;
   let attempts = 0;
@@ -42,10 +42,10 @@ async function sendMessageTwilio(phone, code) {
     }
   }
 }
-// Controlador principal de usuarios con resolvers GraphQL
+//Controlador principal de usuarios con resolvers GraphQL
 const userController = {
   Query: {
-    // Consulta para obtener todos los usuarios
+    //Consulta para obtener todos los usuarios
     getUsers: async () => {
       try {
         return await userModel.getAll();
@@ -54,7 +54,7 @@ const userController = {
       }
     },
 
-    // Consulta para obtener un usuario específico por su correo electrónico
+    //Consulta para obtener un usuario específico por su correo electrónico
     getUser: async (_, { email }) => {
       try {
         const user = await userModel.getById(email);
@@ -69,7 +69,7 @@ const userController = {
   },
 
   Mutation: {
-    // Registro de un nuevo usuario
+    //Registro de un nuevo usuario
     registerUser: async (_, { email, phone, via }) => {
       try {
         console.log("Iniciando registro de usuario con datos:", {
@@ -81,19 +81,19 @@ const userController = {
           throw new Error("Email y teléfono son obligatorios.");
         }
 
-        // 🔹 Validación de formato de email
+        //Validación de formato de email
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
           throw new Error("Formato de correo inválido.");
         }
 
-        // 🔹 Validación de formato de número telefónico internacional (México)
+        //Validación de formato de número telefónico internacional (México)
         const phoneRegex = /^\+521\d{10}$/;
         if (!phoneRegex.test(phone)) {
           throw new Error("Formato del número telefónico inválido.");
         }
 
-        // 🔹 Prevención de spam: verifica si ya se generó un código en el último minuto
+        //Prevención de spam: verifica si ya se generó un código en el último minuto
         const now = Date.now();
         const existingCode = await authCodeModel.findByEmail(email);
         if (
@@ -108,15 +108,15 @@ const userController = {
           throw new Error("Este correo ya está registrado. Usa otro correo.");
         }
 
-        // Generación de código de verificación
+        //Generación de código de verificación
         const code = generateVerificationCode();
         console.log("Código generado:", code);
 
-        // Envío del código al usuario por WhatsApp usando Twilio
+        //Envío del código al usuario por WhatsApp usando Twilio
         console.log("Enviando mensaje por Twilio...");
         await sendMessageTwilio(phone, code);
 
-        // Registro del usuario en la base de datos
+        //Registro del usuario en la base de datos
         console.log("Guardando usuario en la base de datos...");
         const newUser = await userModel.create({ email, phone });
 
@@ -124,7 +124,7 @@ const userController = {
           throw new Error("No se pudo generar un ID para el usuario.");
         }
 
-        // Almacenar el código de verificación asociado al usuario
+        //Almacenar el código de verificación asociado al usuario
         console.log("Guardando código de verificación en la base de datos...");
         const authCode = {
           userId: newUser.id,
@@ -143,7 +143,7 @@ const userController = {
       }
     },
 
-    // Verificación del código enviado al usuario
+    //Verificación del código enviado al usuario
     verifyCode: async (_, { email, code }) => {
       try {
         console.log("Verificando código para:", email);
@@ -157,7 +157,6 @@ const userController = {
         }
 
         if (authCode.code !== code) {
-          // 🔹 Ahora accede correctamente a `authCode.code`
           console.log("Código incorrecto.");
           return null;
         }
@@ -178,14 +177,26 @@ const userController = {
         const user = await userModel.getById(email);
         console.log("Usuario verificado correctamente:", user);
 
-        return user; // 🔹 Devuelve el usuario con `isVerified: true`
+        // Generación de token JWT con variable de entorno
+        const token = jwt.sign(
+          { id: user.id, email: user.email },
+          process.env.JWT_SECRET || "clave_secreta",
+          { expiresIn: "1h" }
+        );
+
+        return {
+          id: user.id,
+          email: user.email,
+          phone: user.phone,
+          isVerified: true,
+          token,
+        };
       } catch (error) {
         console.error("Error en verifyCode:", error);
         return null;
       }
     },
-
-    // Inicio de sesión del usuario
+    //Inicio de sesión del usuario
     login: async (_, { email }) => {
       try {
         console.log("Iniciando sesión para:", email);
@@ -193,7 +204,7 @@ const userController = {
         const user = await userModel.getById(email);
         if (!user) throw new Error("Usuario no encontrado.");
 
-        // Verificación del estado del usuario
+        //Verificación del estado del usuario
         if (!user.isVerified) {
           const authCode = await authCodeModel.findByEmail(email);
 
@@ -201,7 +212,7 @@ const userController = {
             const now = new Date();
             const timeDifference = (now - new Date(authCode.createdAt)) / 1000;
 
-            // Prevenir envío de múltiples códigos en menos de 1 minuto
+            //Prevenir envío de múltiples códigos en menos de 1 minuto
             if (timeDifference < 60) {
               throw new Error(
                 "Código enviado recientemente, intenta en 1 minuto."
@@ -209,7 +220,7 @@ const userController = {
             }
           }
 
-          // Generar y reenviar un nuevo código si no está verificado
+          //Generar y reenviar un nuevo código si no está verificado
           const newCode = generateVerificationCode();
           await authCodeModel.update(email, {
             code: newCode,
@@ -221,11 +232,11 @@ const userController = {
           throw new Error("Usuario no verificado, nuevo código enviado.");
         }
 
-        // Generar token JWT de sesión
+        //Generar token JWT de sesión
         const token = jwt.sign(
           { id: user.id, email: user.email },
-          "clave_secreta", // Reemplazar en producción por clave segura
-          { expiresIn: "1h" } // Token válido por 1 hora
+          "clave_secreta", //Reemplazar en producción por clave segura
+          { expiresIn: "1h" } //Token válido por 1 hora
         );
 
         console.log("Inicio de sesión exitoso.");
